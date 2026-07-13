@@ -61,7 +61,10 @@ def run():
         response.content_type = 'application/octet-stream'  # type: ignore
         return payload
     
-    def run_server(): bottle.run(app, host='0.0.0.0', port=BPY_PORT, server='tornado')
+    # Local IPC only: the client connects to http://localhost (see BPY_SERVER
+    # in spec.py), and this endpoint deserializes request bodies with pickle,
+    # so it must not be reachable from the network. Bind loopback.
+    def run_server(): bottle.run(app, host='127.0.0.1', port=BPY_PORT, server='tornado')
     threading.Thread(target=run_server, daemon=False).start()
     
     while True:
