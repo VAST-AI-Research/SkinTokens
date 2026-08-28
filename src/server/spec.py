@@ -70,13 +70,15 @@ def get_model(
     hf_path: Optional[str]=None,
     device='cuda',
 ) -> TokenRig:
+    from ..model.attention_backend import transformers_attn_implementation
+
     model = TokenRig.load_from_system_checkpoint(checkpoint_path=ckpt_path)
     if hf_path is not None:
         from transformers import AutoModel
         a = AutoModel.from_pretrained(
             hf_path,
             local_files_only=True,
-            _attn_implementation="flash_attention_2",
+            _attn_implementation=transformers_attn_implementation(),
             torch_dtype=torch.bfloat16,
         )
         model.transformer.model.load_state_dict(a.state_dict())

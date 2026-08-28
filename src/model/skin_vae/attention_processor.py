@@ -10,21 +10,7 @@ from diffusers.utils.import_utils import is_torch_npu_available, is_xformers_ava
 from diffusers.utils.torch_utils import is_torch_version, maybe_allow_in_graph
 from torch import nn
 
-try:
-    from flash_attn_interface import flash_attn_func
-except Exception as e:
-    def flash_attn_func(q, k, v):
-        q = q.permute(0, 2, 1, 3)  # (B, H, L, D)
-        k = k.permute(0, 2, 1, 3)
-        v = v.permute(0, 2, 1, 3)
-
-        if q.shape[1] != k.shape[1]:
-            repeat_factor = q.shape[1] // k.shape[1]
-            k = k.repeat_interleave(repeat_factor, dim=1)
-            v = v.repeat_interleave(repeat_factor, dim=1)
-
-        out = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-        return out.permute(0, 2, 1, 3), None  # (B, L, H, D)
+from ..attention_backend import flash_attn_func
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
