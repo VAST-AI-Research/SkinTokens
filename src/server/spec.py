@@ -65,11 +65,25 @@ def object_to_bytes(t):
 def bytes_to_object(b, map_location=None):
     return torch.load(io.BytesIO(b), weights_only=False, map_location=map_location)
 
+def default_device() -> str:
+    # ROCm builds of PyTorch (AMD GPUs) also report themselves as "cuda"
+    return 'cuda' if torch.cuda.is_available() else 'cpu'
+
+def default_precision(device: str) -> str:
+    # NVIDIA: bf16 weights as trained. AMD/ROCm and CPU: fp32 weights + bf16 autocast ("mixed"); on CPU the
+    # bf16 weights fail (the cuda autocast decorators are inactive) and on ROCm they give noticeably worse skins.
+    if device == 'cuda' and torch.version.hip is None:
+        return 'bf16'
+    return 'mixed'
+
 def get_model(
     ckpt_path: str,
     hf_path: Optional[str]=None,
-    device='cuda',
+    device: Optional[str]=None,
+    precision: Optional[str]=None,
 ) -> TokenRig:
+    device = device or default_device()
+    precision = precision or default_precision(device)
     model = TokenRig.load_from_system_checkpoint(checkpoint_path=ckpt_path)
     if hf_path is not None:
         from transformers import AutoModel
@@ -81,5 +95,7 @@ def get_model(
         )
         model.transformer.model.load_state_dict(a.state_dict())
 
+    if precision == 'mixed':
+        model = model.float()
     model = model.to(device)
     return model

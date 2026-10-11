@@ -6,11 +6,12 @@ omegaconf
 lightning
 addict
 fast-simplification
-bpy>=4.2
+bpy>=4.2; python_version < "3.12"  # no bpy wheels for Python 3.12 yet, see README (AMD GPUs and CPU)
 trimesh
 open3d
 huggingface_hub
 numpy>=1.26.0
+scipy
 gradio
 bottle
 tornado

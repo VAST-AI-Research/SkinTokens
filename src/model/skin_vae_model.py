@@ -18,10 +18,14 @@ from .skin_vae.autoencoders import SkinFSQCVAEModel
 try:
     from flash_attn_interface import flash_attn_func # type: ignore
 except Exception as e:
-    from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func
-    def flash_attn_func(*args, **kwargs):
-        res = _flash_attn_func(*args, **kwargs)
-        return res, None
+    try:
+        from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func
+        def flash_attn_func(*args, **kwargs):
+            res = _flash_attn_func(*args, **kwargs)
+            return res, None
+    except Exception:
+        # no flash-attn (AMD/ROCm, CPU): PyTorch scaled_dot_product_attention
+        from .attention_fallback import flash_attn_func
 
 class Perceiver(nn.Module):
     def __init__(self, channels, out_tokens, num_heads=8):

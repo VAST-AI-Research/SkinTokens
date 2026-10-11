@@ -3,6 +3,7 @@ from pathlib import Path
 from torch import nn, Tensor, FloatTensor
 from torch.nn.functional import pad
 from transformers import AutoModelForCausalLM, AutoConfig, LogitsProcessor, LogitsProcessorList # type: ignore
+from transformers.utils import is_flash_attn_2_available # type: ignore
 from typing import Dict, List, Tuple
 
 import math
@@ -25,10 +26,14 @@ from ..tokenizer.parse import get_tokenizer
 try:
     from flash_attn_interface import flash_attn_func # type: ignore
 except Exception as e:
-    from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func
-    def flash_attn_func(*args, **kwargs):
-        res = _flash_attn_func(*args, **kwargs)
-        return res, None
+    try:
+        from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func
+        def flash_attn_func(*args, **kwargs):
+            res = _flash_attn_func(*args, **kwargs)
+            return res, None
+    except Exception:
+        # no flash-attn (AMD/ROCm, CPU): PyTorch scaled_dot_product_attention
+        from .attention_fallback import flash_attn_func
 
 class VocabSwitchingLogitsProcessor(LogitsProcessor):
     def __init__(self, tokenizer: Tokenizer, switch_token_id, eos_token_id, tokens_per_skin, init):
@@ -106,7 +111,9 @@ class TokenRig(ModelSpec):
         llm_config.torch_dtype = torch.bfloat16
         llm_config.pre_norm = True
         self.llm_config = llm_config
-        self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation="flash_attention_2").to(torch.bfloat16)
+        # flash-attn 2 when available (NVIDIA), otherwise PyTorch SDPA (AMD/ROCm, CPU)
+        attn_implementation = "flash_attention_2" if is_flash_attn_2_available() else "sdpa"
+        self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation=attn_implementation).to(torch.bfloat16)
         
         self.output_proj = nn.Sequential(
             nn.Linear(self.mesh_encoder.width, self.hidden_size),
