@@ -39,7 +39,7 @@ See the [project page](https://zjp-shadow.github.io/works/SkinTokens/) for the f
 ## 📦 Installation
 
 ### Prerequisites
-- **Hardware**: An NVIDIA GPU with at least **14 GB** of memory is required for inference.
+- **Hardware**: An NVIDIA GPU with at least **14 GB** of memory is recommended for inference. AMD GPUs (ROCm) and CPU-only inference are also supported, see [AMD GPUs and CPU](#amd-gpus-rocm-and-cpu).
 - **Software**:
   - Python >= 3.11
   - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) >= 12.1
@@ -68,7 +68,7 @@ See the [project page](https://zjp-shadow.github.io/works/SkinTokens/) for the f
     uv pip install -r requirements.txt
     ```
 
-4. Install [flash-attn](https://github.com/Dao-AILab/flash-attention):
+4. Install [flash-attn](https://github.com/Dao-AILab/flash-attention) (NVIDIA only; optional, without it PyTorch attention is used):
     ```sh
     uv pip install flash-attn --no-build-isolation
     ```
@@ -79,6 +79,55 @@ See the [project page](https://zjp-shadow.github.io/works/SkinTokens/) for the f
     ```
 
     This downloads the TokenRig and FSQ-CVAE checkpoints to `experiments/`, and the Qwen3-0.6B config to `models/`.
+
+### AMD GPUs (ROCm) and CPU
+
+TokenRig does not need NVIDIA-only packages:
+
+- without `flash-attn`, attention falls back to PyTorch `scaled_dot_product_attention` and the Qwen3 backbone uses `attn_implementation="sdpa"`;
+- the device is chosen automatically: `cuda` if available (ROCm builds of PyTorch also report `cuda`), otherwise `cpu`. Override with `--device cuda|cpu`;
+- precision: bf16 on NVIDIA as before; on AMD and CPU the default is `--precision mixed` (fp32 weights + bf16 autocast). On CPU bf16 weights fail with a dtype mismatch (the CUDA autocast decorators are inactive), and on ROCm they gave noticeably worse skin weights in our tests.
+
+**AMD GPU on Windows** (tested: Radeon RX 9070 XT, Windows 11, PyTorch 2.9.1 + ROCm 7.2.1). AMD's PyTorch wheels for Windows need Python 3.12, while `bpy` wheels exist only for Python 3.11, so the Blender server runs in a second environment, selected with `SKINTOKENS_BPY_PYTHON`:
+
+```powershell
+# main environment (Python 3.12): ROCm SDK + PyTorch wheels from AMD, current URLs in
+# https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html
+uv venv --python 3.12 .venv
+.venv\Scripts\activate
+$ROCM = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1"
+uv pip install "$ROCM/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl" "$ROCM/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl" "$ROCM/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl" "$ROCM/rocm-7.2.1.tar.gz"
+uv pip install "$ROCM/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl"
+uv pip install -r requirements.txt
+
+# Blender server environment (Python 3.11, CPU PyTorch is enough)
+uv venv --python 3.11 .venv-bpy
+uv pip install --python .venv-bpy torch --index-url https://download.pytorch.org/whl/cpu
+uv pip install --python .venv-bpy -r requirements.txt
+
+python download.py --model
+$env:SKINTOKENS_BPY_PYTHON = ".venv-bpy\Scripts\python.exe"
+python demo.py --input examples/giraffe.glb --output results/giraffe.glb --use_transfer
+```
+
+**AMD GPU on Linux**: PyTorch publishes ROCm wheels for Python 3.11 (https://pytorch.org/get-started/locally/), so a single environment as in the steps above, with the ROCm index URL instead of the CUDA one and without flash-attn, should work (not tested here).
+
+**CPU only** (tested: Windows 11, Ryzen 7 7800X3D): a single Python 3.11 environment.
+
+```sh
+uv venv --python 3.11
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+uv pip install -r requirements.txt
+python download.py --model
+python demo.py --device cpu --input examples/giraffe.glb --output results/giraffe.glb --use_transfer
+```
+
+Generation time for `examples/giraffe.glb` (default parameters, one run, model loading excluded):
+
+| | full rig | skin only (`--use_skeleton`) |
+| --- | --- | --- |
+| Radeon RX 9070 XT (ROCm, Windows) | 50 s | 29 s |
+| Ryzen 7 7800X3D (CPU) | 200 s | 146 s |
 
 ## 🤖 Pretrained Models
 

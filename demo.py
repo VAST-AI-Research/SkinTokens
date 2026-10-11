@@ -11,6 +11,7 @@ from typing import List, Iterable, Optional, Tuple
 
 import gradio as gr
 import requests
+import torch
 from torch import Tensor
 from tqdm import tqdm
 
@@ -23,6 +24,8 @@ from src.model.tokenrig import TokenRigResult
 from src.tokenizer.parse import get_tokenizer
 from src.server.spec import (
     BPY_SERVER,
+    default_device,
+    default_precision,
     get_model,
     object_to_bytes,
     bytes_to_object,
@@ -39,8 +42,11 @@ HF_PATHS = [
 
 
 def start_bpy_server():
+    # SKINTOKENS_BPY_PYTHON: interpreter for the Blender (bpy) server, if bpy is not installable in this one
+    # (e.g. Windows + AMD: PyTorch ROCm wheels need Python 3.12, bpy wheels need Python 3.11)
+    python = os.environ.get("SKINTOKENS_BPY_PYTHON", sys.executable)
     popen_kwargs = dict(
-        args=[sys.executable, "bpy_server.py"],
+        args=[python, "bpy_server.py"],
         stdout=None,
         stderr=None,
     )
@@ -73,6 +79,8 @@ tokenizer = None
 transform = None
 CURRENT_MODEL_CKPT: Optional[str] = None
 CURRENT_HF_PATH: Optional[str] = None
+DEVICE: Optional[str] = None  # None: cuda if available (NVIDIA or AMD/ROCm), else cpu
+PRECISION: Optional[str] = None  # None: bf16 on NVIDIA, mixed (fp32 weights + bf16 autocast) on AMD/ROCm and CPU
 
 
 def load_model(model_ckpt: str, hf_path: Optional[str]) -> Tuple[str, str]:
@@ -86,7 +94,7 @@ def load_model(model_ckpt: str, hf_path: Optional[str]) -> Tuple[str, str]:
         raise RuntimeError("model_ckpt is empty. Please select a checkpoint.")
 
     print(f"Loading model: {model_ckpt}, hf_path={hf_path}")
-    model = get_model(model_ckpt, hf_path=hf_path)
+    model = get_model(model_ckpt, hf_path=hf_path, device=DEVICE, precision=PRECISION)
     assert model.tokenizer_config is not None
     tokenizer = get_tokenizer(**model.tokenizer_config)
     transform = Transform.parse(**model.transform_config["predict_transform"])
@@ -186,9 +194,11 @@ def run_rig(
 
     results_out = []
 
+    device = DEVICE or default_device()
+    precision = PRECISION or default_precision(device)
     for i, batch in tqdm(enumerate(dataloader), total=len(dataloader)):
         batch = {
-            k: v.to("cuda") if isinstance(v, Tensor) else v
+            k: v.to(device) if isinstance(v, Tensor) else v
             for k, v in batch.items()
         }
 
@@ -213,11 +223,12 @@ def run_rig(
         else:
             skeleton_tokens = None
 
-        preds: List[TokenRigResult] = model.predict_step(
-            batch,
-            skeleton_tokens=[skeleton_tokens] if skeleton_tokens is not None else None,
-            make_asset=True,
-        )["results"]
+        with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=precision == "mixed"):
+            preds: List[TokenRigResult] = model.predict_step(
+                batch,
+                skeleton_tokens=[skeleton_tokens] if skeleton_tokens is not None else None,
+                make_asset=True,
+            )["results"]
 
         asset = preds[0].asset
         assert asset is not None
@@ -440,7 +451,14 @@ if __name__ == "__main__":
 
     parser.add_argument("--gradio", action="store_true")
 
+    parser.add_argument("--device", choices=["cuda", "cpu"], default=None,
+                        help="default: cuda if available (NVIDIA, or AMD with a ROCm build of PyTorch), else cpu")
+    parser.add_argument("--precision", choices=["bf16", "mixed"], default=None,
+                        help="default: bf16 on NVIDIA, mixed (fp32 weights + bf16 autocast) on AMD/ROCm and CPU")
+
     args = parser.parse_args()
+    DEVICE = args.device
+    PRECISION = args.precision
 
     server_proc = start_bpy_server()
     wait_for_bpy_server()

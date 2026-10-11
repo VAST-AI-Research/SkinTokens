@@ -120,6 +120,8 @@ def get_free_space(path):
     return free_space
 
 def get_device_type():
+    if not torch.cuda.is_available():
+        return "cpu"
     return torch.cuda.get_device_name(0)
 
 def get_hostname():
